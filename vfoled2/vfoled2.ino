@@ -1,6 +1,5 @@
-#include <Wire.h>             // Biblioteca para comunicación I2C
+//#include <Wire.h>             // Biblioteca para comunicación I2C
 #include <si5351.h>           // Biblioteca para controlar el sintetizador de frecuencia SI5351
-#include <SPI.h>              // Biblioteca para comunicación SPI (no utilizada en este código)
 #include <Adafruit_SSD1306.h> // Biblioteca para controlar la pantalla OLED
 
 // Definición de las dimensiones de la pantalla OLED
@@ -18,22 +17,20 @@ Adafruit_SSD1306 display = Adafruit_SSD1306(128, 64, &Wire);
 unsigned int hz;
 unsigned int khz;
 unsigned int mhz;
-
+int val;
 // Otras variables para manejo de frecuencia y modos
 int interval;
 int Moffset = 0;         // Offset de modo (AM, LSB, USB)
-int txoffset = 0;
-int TXOffset = 0;
 int mode;                // Variable que almacena el modo actual (AM, LSB, USB)
 int sensorValue;
 int change;              // Variable de bandera para detectar cambios
 int debounceT = 5;       // Tiempo de debounce para botones
 int correction = 0;      // Corrección de frecuencia (si es necesario)
-int compensacion = 28610;
+int compensacion = -28610;
 
 // Variables de tiempo para actualización de audio
 unsigned long lastAudioUpdate = 0;
-unsigned long audioUpdateInterval = 10;
+unsigned long audioUpdateInterval = 5;
 
 // Frecuencias y pasos de ajuste
 unsigned long currentFrequency = 27695000; // Frecuencia inicial
@@ -41,6 +38,7 @@ unsigned long minFrequency = 25000000;     // Frecuencia mínima (25 MHz)
 unsigned long maxFrequency = 28500000;     // Frecuencia máxima (30 MHz)
 unsigned long stepSize = 1000;             // Tamaño del paso de ajuste (1 kHz)
 unsigned long iFrequency = 10671000;       // Frecuencia de IF (10671 kHz)
+int TXoffset = 0;
 
 // Variables de estado para pines de control de modo
 bool SA;
@@ -55,13 +53,17 @@ String fstep = "1khz";   // Cadena que representa el tamaño del paso
 String frequency_string; // Cadena completa de la frecuencia para mostrar
 String modeS;            // Cadena que representa el modo actual (AM, LSB, USB)
 String banda;            // Banda actual basada en la frecuencia
-//String TXState = "RX";
-// Instancia para manejar el sintetizador de frecuencia SI5351
-Si5351 si5351;
-
+//String rState;   //esta madre me rompe todo el codigo
 // Variables para almacenar el estado anterior de los pines SA y SB
 bool previousSA;
 bool previousSB;
+
+String rState = "RX";
+
+
+// Instancia para manejar el sintetizador de frecuencia SI5351
+Si5351 si5351;
+
 
 void setup() {
   // Inicialización de la pantalla OLED
@@ -89,7 +91,7 @@ void setup() {
 
   // Configuración inicial de la frecuencia del CLK0 con la frecuencia inicial
   si5351.drive_strength(SI5351_CLK0, SI5351_DRIVE_6MA);
-  si5351.set_freq((currentFrequency - iFrequency + Moffset - correction) * SI5351_FREQ_MULT, SI5351_CLK0);
+  si5351.set_freq((currentFrequency - iFrequency + Moffset - compensacion + TXoffset) * SI5351_FREQ_MULT, SI5351_CLK0);
   SA = digitalRead(6);
   SB = digitalRead(7);
   previousSA = SA;
@@ -97,15 +99,12 @@ void setup() {
   if (SA == LOW && SB == LOW) {
     modeS = "AM";   // Cambia a modo AM
     Moffset = 3000; // Establece el offset para AM
-    mode = 1;
   } else if (SA == HIGH && SB == LOW) {
     modeS = "LSB";  // Cambia a modo LSB
     Moffset = 0;    // Establece el offset para LSB
-    mode = 2;
   } else if (SA == LOW && SB == HIGH) {
     modeS = "USB";  // Cambia a modo USB
     Moffset = 5000; // Establece el offset para USB
-    mode = 3;
   }
 
   // Actualización inicial de la pantalla con la frecuencia y modo actuales
@@ -145,10 +144,8 @@ void knob_ISR1() {
 void actualizar() {
   change = false; // Resetea la bandera de cambio
   fstring();      // Convierte la frecuencia actual en una cadena formateada
-  banda = getband(currentFrequency); // Obtiene la banda basada en la frecuencia actual
-
   // Ajusta la frecuencia del SI5351 en base a la frecuencia actual y el offset
-  si5351.set_freq((currentFrequency - iFrequency + Moffset - correction + txoffset) * SI5351_FREQ_MULT, SI5351_CLK0);
+  si5351.set_freq((currentFrequency - iFrequency + Moffset + compensacion +  TXoffset) * SI5351_FREQ_MULT, SI5351_CLK0);
 
   // Actualiza la pantalla con la frecuencia, el paso, y el modo actuales
   display.clearDisplay();
@@ -162,9 +159,9 @@ void actualizar() {
   display.setTextSize(2);
   display.setCursor(20, 40);
   display.println(modeS);
-  //display.setTextSize(2);
-  //display.setCursor(40, 40);
-  //display.println(TXState);
+  display.setTextSize(3);
+  display.setCursor(80, 30);
+  display.println(rState);
   display.display();
   delay(50); // Pequeño retardo para debounce
 }
@@ -220,26 +217,7 @@ void fstring() {
   frequency_string = smhz + skhz + shz;
 }
 
-// Función para determinar la banda en base a la frecuencia
-String getband(unsigned long currentFrequency1) {
-  if (currentFrequency1 >= 1800000 && currentFrequency1 <= 2000000) {
-    return "160m "; // Banda de 160 metros
-  } else if (currentFrequency1 >= 3500000 && currentFrequency1 <= 4000000) {
-    return "80m "; // Banda de 80 metros
-  } else if (currentFrequency1 >= 7000000 && currentFrequency1 <= 7300000) {
-    return "40m "; // Banda de 40 metros
-  } else if (currentFrequency1 >= 14000000 && currentFrequency1 <= 14350000) {
-    return "20m "; // Banda de 20 metros
-  } else if (currentFrequency1 >= 21000000 && currentFrequency1 <= 21450000) {
-    return "15m "; // Banda de 15 metros
-  } else if (currentFrequency1 >= 26900000 && currentFrequency1 <= 27500000) {
-    return "CB "; // Banda de CB
-  } else if (currentFrequency1 >= 28000000 && currentFrequency1 <= 29700000) {
-    return "10m "; // Banda de 10 metros
-  } else {
-    return "N/A "; // No se encuentra en ninguna banda específica
-  }
-}
+
 
 void loop() {
   // Obtiene el tiempo actual
@@ -256,6 +234,19 @@ void loop() {
     // Lee el estado de los pines SA y SB para determinar el modo
     SA = digitalRead(6);
     SB = digitalRead(7);
+    val = analogRead(TXPIN);
+    if (val > 100) {
+      rState = "TX";
+      TXoffset = -524400;
+      actualizar();
+
+    }
+    else if (val < 300) {
+      rState = "RX";
+      TXoffset = 0;
+      actualizar();
+
+    }
 
     // Si hay un cambio en los pines SA o SB, cambia el modo
     if (SA != previousSA || SB != previousSB) {
